@@ -140,7 +140,7 @@ class FilterSignal(Signal):
 
         for receiver, _ in receivers:
             response = receiver(signal=self, sender=sender, **responses)
-            for key, value in response:
+            for key, value in response.items():
                 responses[key] = value
         
         return responses
@@ -183,7 +183,7 @@ class FilterSignal(Signal):
         for receiver, _ in receivers:
             try:
                 response = receiver(signal=self, sender=sender, **responses)
-                for key, value in response:
+                for key, value in response.items():
                     responses[key] = value
             except Exception as err:
                 responses["_errors"].append((receiver, err))
