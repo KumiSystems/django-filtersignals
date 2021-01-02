@@ -1,4 +1,4 @@
-from django.dispatch.dispatcher import Signal, NO_RECEIVERS, _make_id
+from django.dispatch.dispatcher import Signal, NO_RECEIVERS, _make_id, NONE_ID
 from django.utils.inspect import func_accepts_kwargs
 
 import weakref
@@ -133,12 +133,17 @@ class FilterSignal(Signal):
         if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
             return named
 
-        for receiver in self._live_receivers(sender):
+        responses = named
 
-        return [
-            (receiver, receiver(signal=self, sender=sender, **named))
-            for receiver in self._live_receivers(sender)
-        ]
+        receivers = self._live_receivers(sender)
+        receivers.sort(key=lambda x:x[1])
+
+        for receiver, _ in receivers:
+            response = receiver(signal=self, sender=sender, **responses)
+            for key, value in response:
+                responses[key] = value
+        
+        return responses
 
     def send_robust(self, sender, **named):
         """
@@ -168,16 +173,61 @@ class FilterSignal(Signal):
             return []
 
         # Call each receiver with whatever arguments it can accept.
-        # Return a list of tuple pairs [(receiver, response), ... ].
-        responses = []
-        for receiver in self._live_receivers(sender):
+        # Return the updated dict
+        responses = named
+        responses["_errors"] = []
+
+        receivers = self._live_receivers(sender)
+        receivers.sort(key=lambda x:x[1])
+
+        for receiver, _ in receivers:
             try:
-                response = receiver(signal=self, sender=sender, **named)
+                response = receiver(signal=self, sender=sender, **responses)
+                for key, value in response:
+                    responses[key] = value
             except Exception as err:
-                responses.append((receiver, err))
-            else:
-                responses.append((receiver, response))
+                responses["_errors"].append((receiver, err))
+
         return responses
+
+    def _live_receivers(self, sender):
+        """
+        Filter sequence of receivers to get resolved, live receivers.
+
+        This checks for weak references and resolves them, then returning only
+        live receivers.
+        """
+        receivers = None
+        if self.use_caching and not self._dead_receivers:
+            receivers = self.sender_receivers_cache.get(sender)
+            # We could end up here with NO_RECEIVERS even if we do check this case in
+            # .send() prior to calling _live_receivers() due to concurrent .send() call.
+            if receivers is NO_RECEIVERS:
+                return []
+        if receivers is None:
+            with self.lock:
+                self._clear_dead_receivers()
+                senderkey = _make_id(sender)
+                receivers = []
+                for (_, r_senderkey), receiver, priority in self.receivers:
+                    if r_senderkey == NONE_ID or r_senderkey == senderkey:
+                        receivers.append((receiver, priority))
+                if self.use_caching:
+                    if not receivers:
+                        self.sender_receivers_cache[sender] = NO_RECEIVERS
+                    else:
+                        # Note, we must cache the weakref versions.
+                        self.sender_receivers_cache[sender] = receivers
+        non_weak_receivers = []
+        for receiver, priority in receivers:
+            if isinstance(receiver, weakref.ReferenceType):
+                # Dereference the weak reference.
+                receiver = receiver()
+                if receiver is not None:
+                    non_weak_receivers.append((receiver, priority))
+            else:
+                non_weak_receivers.append((receiver, priority))
+        return non_weak_receivers
 
 def receiver(signal, priority, **kwargs):
     """
