@@ -133,6 +133,8 @@ class FilterSignal(Signal):
         if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
             return named
 
+        named["_protected"] = named["_protected"] if "_protected" in named.keys() else []
+
         responses = named
 
         receivers = self._live_receivers(sender)
@@ -141,7 +143,8 @@ class FilterSignal(Signal):
         for receiver, _ in receivers:
             response = receiver(signal=self, sender=sender, **responses)
             for key, value in response.items():
-                responses[key] = value
+                if not key in responses["_protected"]:
+                    responses[key] = value
         
         return responses
 
@@ -172,6 +175,8 @@ class FilterSignal(Signal):
         if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
             return []
 
+        named["_protected"] = named["_protected"] if "_protected" in named.keys() else []
+
         # Call each receiver with whatever arguments it can accept.
         # Return the updated dict
         responses = named
@@ -184,7 +189,8 @@ class FilterSignal(Signal):
             try:
                 response = receiver(signal=self, sender=sender, **responses)
                 for key, value in response.items():
-                    responses[key] = value
+                    if not key in responses["_protected"]:
+                        responses[key] = value
             except Exception as err:
                 responses["_errors"].append((receiver, err))
 
